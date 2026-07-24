@@ -6,17 +6,35 @@ cd "$(dirname "$(realpath "$0")")"
 MODEL="${DEFAULT_MODEL:-Qwen/Qwen3.5-9B}"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8000}"
-GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.75}"
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-2048}"
 LORA_MODULES="${LORA_MODULES:-}"
-ATTENTION_BACKEND="${ATTENTION_BACKEND:-FLASHINFER}"
-ENFORCE_EAGER="${ENFORCE_EAGER:-1}"
+ATTENTION_BACKEND="${ATTENTION_BACKEND:-FLASH_ATTN}"
 
 PYTHON_BIN=".venv/bin/python"
 
-if [ ! -d .venv ]; then
-  echo ".venv is missing. Run ./setup_env.sh first." >&2
-  exit 1
+if [ ! -x .venv/bin/vllm ]; then
+  echo "vLLM is not installed. Detecting this machine and setting it up..."
+  ./setup_env.sh
+fi
+
+# FlashInfer の JIT build が壊れた CUDA_HOME を参照しないように補正する。
+CUDA_TOOLKIT_ROOT="${CUDA_HOME:-${CUDA_PATH:-}}"
+while [[ "$CUDA_TOOLKIT_ROOT" == *: ]]; do
+  CUDA_TOOLKIT_ROOT="${CUDA_TOOLKIT_ROOT%:}"
+done
+
+if [ ! -x "${CUDA_TOOLKIT_ROOT:+$CUDA_TOOLKIT_ROOT/bin/nvcc}" ]; then
+  if NVCC_BIN="$(command -v nvcc 2>/dev/null)"; then
+    CUDA_TOOLKIT_ROOT="$(dirname "$(dirname "$(realpath "$NVCC_BIN")")")"
+  else
+    CUDA_TOOLKIT_ROOT=""
+  fi
+fi
+
+if [ -n "$CUDA_TOOLKIT_ROOT" ]; then
+  export CUDA_HOME="$CUDA_TOOLKIT_ROOT"
+  export CUDA_PATH="$CUDA_TOOLKIT_ROOT"
 fi
 
 SITE_PACKAGES="$("$PYTHON_BIN" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
@@ -62,9 +80,6 @@ for arg in "$@"; do
   case "$arg" in
     --MULTIMODAL)
       MULTIMODAL=1
-      ;;
-    --no-enforce-eager)
-      ENFORCE_EAGER=0
       ;;
     *)
       FILTERED_ARGS+=("$arg")
@@ -154,6 +169,8 @@ OPTS=(
   --port "$PORT"
   --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
   --max-model-len "$MAX_MODEL_LEN"
+  # 起動時の互換性を優先し、eager execution を常に既定値として使う。
+  --enforce-eager
 )
 
 if [ "$MULTIMODAL" != "1" ]; then
@@ -162,10 +179,6 @@ fi
 
 if [ -n "$ATTENTION_BACKEND" ]; then
   OPTS+=(--attention-backend "$ATTENTION_BACKEND")
-fi
-
-if [ "$ENFORCE_EAGER" = "1" ]; then
-  OPTS+=(--enforce-eager)
 fi
 
 if [ -n "$LORA_MODULES" ]; then

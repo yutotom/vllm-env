@@ -13,12 +13,19 @@
 
 ## セットアップ
 
+セットアップを個別に行う必要はありません。初回起動時に NVIDIA GPU と driver を確認し、マシンに合う PyTorch CUDA backend を `uv` で自動選択して、`.venv` に vLLM をインストールします。
+
+```bash
+./vserve.sh
+```
+
+環境構築だけを先に行う場合は、次を実行します。
+
 ```bash
 ./setup_env.sh
 ```
 
-このコマンドは、プロジェクト直下に `.venv` を作成し、`vllm` をインストールします。
-デフォルトでは PyTorch backend は `cu128`、vLLM は Qwen3.5 対応のため `vllm>=0.23,<0.24` を指定します。
+このコマンドは GPU 構成を表示し、プロジェクト直下に `.venv` を作成します。vLLM はデフォルトで、インストール時点の最新版を使用します。
 
 Python バージョンを指定する場合は、`PYTHON_VERSION` を使います。
 
@@ -28,18 +35,18 @@ PYTHON_VERSION=3.12 ./setup_env.sh
 
 デフォルトの Python バージョンは `3.12` です。
 
-PyTorch の CUDA backend を変更する場合は、`TORCH_BACKEND` を指定します。
+通常、PyTorch backend の指定は不要です。自動検出を上書きする場合だけ `TORCH_BACKEND` を指定します。
 
 ```bash
 TORCH_BACKEND=cu129 ./setup_env.sh
-TORCH_BACKEND=auto ./setup_env.sh
+TORCH_BACKEND=cu128 ./setup_env.sh
 ```
 
 vLLM のバージョン制約を変更する場合は、`VLLM_SPEC` を指定します。
 
 ```bash
-VLLM_SPEC=vllm ./setup_env.sh
-VLLM_SPEC='vllm>=0.23,<0.24' ./setup_env.sh
+VLLM_SPEC='vllm==0.24.0' ./setup_env.sh
+VLLM_SPEC='vllm>=0.24,<0.25' ./setup_env.sh
 ```
 
 ## 起動
@@ -113,9 +120,10 @@ LORA_MODULES="adapter_a=/path/to/lora-a adapter_b=/path/to/lora-b" ./vserve.sh Q
 | `HOST` | `0.0.0.0` | vLLM サーバーの bind host |
 | `PORT` | `8000` | vLLM サーバーの port |
 | `GPU_MEMORY_UTILIZATION` | `0.90` | vLLM の `--gpu-memory-utilization` |
-| `MAX_MODEL_LEN` | `4096` | vLLM の `--max-model-len` |
+| `MAX_MODEL_LEN` | `2048` | vLLM の `--max-model-len` |
 | `LORA_MODULES` | 未指定 | 指定した場合に `--enable-lora --lora-modules` として渡す LoRA adapter。adapter ディレクトリをモデル引数にした場合は自動設定 |
-| `ATTENTION_BACKEND` | 未指定 | 指定した場合に vLLM の `--attention-backend` として渡す。FlashAttention で失敗する場合は `FLASHINFER` や `TRITON_ATTN` を試す |
+| `ATTENTION_BACKEND` | `FLASH_ATTN` | vLLM の `--attention-backend` として渡す。FlashAttention で失敗する場合は `FLASHINFER` や `TRITON_ATTN` を試す |
+| `CUDA_HOME` | 自動検出 | CUDA toolkit の場所。値が不正な場合は `PATH` 上の `nvcc` から補正 |
 | `SKIP_CUDA_CHECK` | `0` | `1` にすると起動前の `torch.cuda.is_available()` チェックを省略 |
 
 例:
@@ -168,11 +176,7 @@ curl http://localhost:8000/v1/chat/completions \
 
 ## トラブルシュート
 
-`.venv is missing. Run ./setup_env.sh first.` と表示された場合は、先にセットアップを実行してください。
-
-```bash
-./setup_env.sh
-```
+初回起動時の自動セットアップに失敗した場合は、表示された GPU 検出またはインストールのエラーを確認してください。`nvidia-smi` が成功しない環境ではセットアップできません。
 
 GPU メモリ不足で起動できない場合は、モデルを小さくするか、`GPU_MEMORY_UTILIZATION` や vLLM の追加オプションを調整してください。
 
@@ -190,8 +194,10 @@ FlashAttention 関連のエラーが出る場合は、まず CUDA 12.8 backend �
 
 ```bash
 rm -rf .venv
-TORCH_BACKEND=cu128 VLLM_SPEC='vllm>=0.23,<0.24' ./setup_env.sh
+TORCH_BACKEND=cu128 ./setup_env.sh
 ```
+
+FlashInfer の JIT build で `nvcc: not found` と表示される場合は、CUDA toolkit の `nvcc` が `PATH` 上にあるか確認してください。`CUDA_HOME` の末尾に余分な `:` がある場合、`vserve.sh` は自動で補正します。
 
 それでも FlashAttention で失敗する場合は、FlashAttention 以外の attention backend を指定して起動します。
 
@@ -200,4 +206,4 @@ ATTENTION_BACKEND=FLASHINFER ./vserve.sh Qwen/Qwen3.5-9B
 ATTENTION_BACKEND=TRITON_ATTN ./vserve.sh Qwen/Qwen3.5-9B
 ```
 
-より新しい driver を使える環境では、`TORCH_BACKEND=cu129`、`TORCH_BACKEND=auto`、`VLLM_SPEC=vllm` でも構いません。
+より新しい driver を使える環境では、`TORCH_BACKEND=cu129` または `TORCH_BACKEND=auto` も利用できます。
