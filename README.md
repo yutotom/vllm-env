@@ -1,8 +1,8 @@
 # vserve
 
-`vserve` は、vLLM の OpenAI 互換サーバーを手早く起動するための小さなラッパースクリプトです。
+このプロジェクトは、vLLM の環境構築と標準 CLI の実行を簡単にするスクリプトです。
 
-デフォルトでは `Qwen/Qwen3.5-9B` を `0.0.0.0:8000` で起動します。モデル名やポートなどは、引数または環境変数で変更できます。
+`setup_vllm_env.sh` で環境を構築し、`vllm.sh` または登録済みの `vllm` コマンドから実行します。
 
 ## 必要なもの
 
@@ -16,21 +16,23 @@
 セットアップを個別に行う必要はありません。初回起動時に NVIDIA GPU と driver を確認し、マシンに合う PyTorch CUDA backend を `uv` で自動選択して、`.venv` に vLLM をインストールします。
 
 ```bash
-./vserve.sh
+./vllm.sh serve Qwen/Qwen3.5-9B
 ```
 
-環境構築だけを先に行う場合は、次を実行します。
+環境構築と `vllm` コマンドの登録を先に行う場合は、次を実行します。
 
 ```bash
-./setup_env.sh
+./setup_vllm_env.sh
 ```
 
-このコマンドは GPU 構成を表示し、プロジェクト直下に `.venv` を作成します。vLLM はデフォルトで、インストール時点の最新版を使用します。
+このコマンドは GPU 構成を表示し、プロジェクト直下に `.venv` を作成します。vLLM はデフォルトで、インストール時点の最新版を使用します。環境構築が成功すると、`$HOME/.local/bin/vllm` に `vllm.sh` へのシンボリックリンクを作成します。既存の同名コマンドは番号付きバックアップに退避します。初回起動時の自動セットアップでも同じ処理を行います。
+
+初回起動時は、書き込み権限などの理由でコマンド登録に失敗しても、警告を表示してサーバー起動へ進みます。`./setup_vllm_env.sh` を直接実行した場合は、登録失敗をエラーとして終了します。どちらの場合も、環境構築自体の失敗では処理を停止します。
 
 Python バージョンを指定する場合は、`PYTHON_VERSION` を使います。
 
 ```bash
-PYTHON_VERSION=3.12 ./setup_env.sh
+PYTHON_VERSION=3.12 ./setup_vllm_env.sh
 ```
 
 デフォルトの Python バージョンは `3.12` です。
@@ -38,109 +40,52 @@ PYTHON_VERSION=3.12 ./setup_env.sh
 通常、PyTorch backend の指定は不要です。自動検出を上書きする場合だけ `TORCH_BACKEND` を指定します。
 
 ```bash
-TORCH_BACKEND=cu129 ./setup_env.sh
-TORCH_BACKEND=cu128 ./setup_env.sh
+TORCH_BACKEND=cu129 ./setup_vllm_env.sh
+TORCH_BACKEND=cu128 ./setup_vllm_env.sh
 ```
 
 vLLM のバージョン制約を変更する場合は、`VLLM_SPEC` を指定します。
 
 ```bash
-VLLM_SPEC='vllm==0.24.0' ./setup_env.sh
-VLLM_SPEC='vllm>=0.24,<0.25' ./setup_env.sh
+VLLM_SPEC='vllm==0.24.0' ./setup_vllm_env.sh
+VLLM_SPEC='vllm>=0.24,<0.25' ./setup_vllm_env.sh
 ```
 
 ## 起動
 
-```bash
-./vserve.sh
-```
-
-デフォルトでは `--language-model-only` を自動で付けます。
-マルチモーダルモデルとして起動したい場合は、`--MULTIMODAL` を指定してください。
-`--MULTIMODAL` はこのスクリプト内で消費され、`vllm serve` には渡しません。
-
-別のモデルを使う場合は、最初の位置引数にモデル名を指定します。
+サブコマンドを含む全引数を vLLM CLI にそのまま渡します。
 
 ```bash
-./vserve.sh Qwen/Qwen3.5-35B-A3B-FP8
+./vllm.sh --help
+./vllm.sh serve Qwen/Qwen3.5-9B --host 127.0.0.1 --port 8000
+./vllm.sh serve Qwen/Qwen3.5-9B --max-model-len 4096 --gpu-memory-utilization 0.90
 ```
 
-`vllm serve` に追加オプションを渡すこともできます。最初の引数が `-` で始まらない場合だけモデル名として扱い、それ以降の引数はそのまま `vllm serve` に渡します。
+独自の既定値は追加しません。オプションは `./vllm.sh serve --help` で確認できます。
+
+## LoRA とマルチモーダル
+
+LoRA はベースモデルと adapter を明示します。必要に応じて `--max-loras` と `--max-lora-rank` も指定してください。adapter 設定からの自動推定は行いません。
 
 ```bash
-./vserve.sh Qwen/Qwen3.5-9B --max-model-len 4096
+./vllm.sh serve Qwen/Qwen3.5-9B --enable-lora --lora-modules adapter_name=/path/to/lora
 ```
+
+マルチモーダルモデルも標準の `serve` で起動します。独自の `--MULTIMODAL` は不要です。言語モデルのみで使う場合は `--language-model-only` を指定します。
+
+## 旧スクリプトからの移行
+
+旧サーバー起動ラッパーは削除しました。`HOST`、`PORT`、`MAX_MODEL_LEN` などの独自環境変数は `--host`、`--port`、`--max-model-len` などの CLI 引数に置き換えてください。CUDA パス補正や LoRA の自動設定も行いません。
+
+## 任意のディレクトリから `vllm` を使う
+
+`setup_vllm_env.sh` は環境構築とコマンド登録をまとめて行います。以前の `vserve` 登録から切り替える場合も、次の手順で `vllm` を登録できます。
 
 ```bash
-./vserve.sh Qwen/Qwen3.5-VL-7B-Instruct --MULTIMODAL
+./setup_vllm_env.sh
 ```
 
-モデル名を変えずに vLLM オプションだけを渡す場合は、先頭からオプションを指定します。
-
-```bash
-./vserve.sh --dtype auto
-```
-
-## LoRA を使う
-
-Transformers/PEFT で訓練した LoRA adapter は、adapter ディレクトリをモデル引数として渡せます。
-`adapter_config.json` の `base_model_name_or_path` を base model として使い、adapter 名はディレクトリ名から自動設定します。
-
-```bash
-./vserve.sh /path/to/lora
-```
-
-この場合、内部的には base model を `vllm serve` のモデルとして使い、`--enable-lora --lora-modules <adapter_dir_name>=/path/to/lora` を自動で付けます。
-
-base model を明示したい場合や、adapter 名を指定したい場合は、`LORA_MODULES` に vLLM の `--lora-modules` へ渡す値を指定します。
-
-```bash
-LORA_MODULES="adapter_name=/path/to/lora" ./vserve.sh Qwen/Qwen3.5-9B
-```
-
-複数の LoRA adapter を登録する場合は、スペース区切りで指定します。
-
-```bash
-LORA_MODULES="adapter_a=/path/to/lora-a adapter_b=/path/to/lora-b" ./vserve.sh Qwen/Qwen3.5-9B
-```
-
-`--max-loras` は読み取れた adapter 数から、`--max-lora-rank` は各 adapter の `adapter_config.json` にある `r` / `rank_pattern` から自動設定されます。該当する `adapter_config.json` が読めない adapter は、この自動設定の対象外です。
-
-環境変数を使わず、vLLM の引数を直接渡すこともできます。
-
-```bash
-./vserve.sh Qwen/Qwen3.5-9B --enable-lora --lora-modules adapter_name=/path/to/lora
-```
-
-## 環境変数
-
-| 変数 | デフォルト | 説明 |
-| --- | --- | --- |
-| `DEFAULT_MODEL` | `Qwen/Qwen3.5-9B` | 引数でモデル名を指定しない場合に使うモデル |
-| `HOST` | `0.0.0.0` | vLLM サーバーの bind host |
-| `PORT` | `8000` | vLLM サーバーの port |
-| `GPU_MEMORY_UTILIZATION` | `0.90` | vLLM の `--gpu-memory-utilization` |
-| `MAX_MODEL_LEN` | `2048` | vLLM の `--max-model-len` |
-| `LORA_MODULES` | 未指定 | 指定した場合に `--enable-lora --lora-modules` として渡す LoRA adapter。adapter ディレクトリをモデル引数にした場合は自動設定 |
-| `ATTENTION_BACKEND` | `FLASH_ATTN` | vLLM の `--attention-backend` として渡す。FlashAttention で失敗する場合は `FLASHINFER` や `TRITON_ATTN` を試す |
-| `CUDA_HOME` | 自動検出 | CUDA toolkit の場所。値が不正な場合は `PATH` 上の `nvcc` から補正 |
-| `SKIP_CUDA_CHECK` | `0` | `1` にすると起動前の `torch.cuda.is_available()` チェックを省略 |
-
-例:
-
-```bash
-HOST=127.0.0.1 PORT=8080 GPU_MEMORY_UTILIZATION=0.80 MAX_MODEL_LEN=8192 ./vserve.sh
-```
-
-## `vserve` コマンドとして使う
-
-`install_vserve.sh` を実行すると、`$HOME/.local/bin/vserve` にシンボリックリンクを作成します。
-
-```bash
-./install_vserve.sh
-```
-
-`$HOME/.local/bin` が `PATH` に入っていない場合は、シェル設定に追加してください。
+登録先は環境変数 `BIN_DIR` で変更できます。既定の `$HOME/.local/bin` が `PATH` に入っていない場合は、シェル設定に追加してください。
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
@@ -149,9 +94,25 @@ export PATH="$HOME/.local/bin:$PATH"
 インストール後は、任意のディレクトリから次のように起動できます。
 
 ```bash
-vserve
-vserve Qwen/Qwen3.5-9B --dtype auto
+vllm --help
+vllm serve Qwen/Qwen3.5-9B --dtype auto
+vllm serve ./my-model --port 8080
 ```
+
+`vllm` は、このリポジトリの `.venv` を使う `uv run --no-sync` 経由で vLLM CLI を実行します。サブコマンドを含む全引数をそのまま渡し、相対パスは呼び出し元のディレクトリを基準に解決します。依存関係の再同期は行わず、セットアップで選択した CUDA backend を維持します。
+
+環境構築済みでコマンド登録だけを変更する場合は、リポジトリ内で次を実行できます。
+
+```bash
+chmod +x vllm.sh
+mkdir -p "$HOME/.local/bin"
+ln -sfn --backup=numbered "$PWD/vllm.sh" "$HOME/.local/bin/vllm"
+hash -r
+```
+
+## 既存の skill について
+
+`.agents/skills/use-vserve` は旧 `vserve` コマンドを前提とした内容です。現在の起動経路には未対応のため、上記の `vllm` コマンドを直接使用してください。
 
 ## API への接続例
 
@@ -178,7 +139,7 @@ curl http://localhost:8000/v1/chat/completions \
 
 初回起動時の自動セットアップに失敗した場合は、表示された GPU 検出またはインストールのエラーを確認してください。`nvidia-smi` が成功しない環境ではセットアップできません。
 
-GPU メモリ不足で起動できない場合は、モデルを小さくするか、`GPU_MEMORY_UTILIZATION` や vLLM の追加オプションを調整してください。
+GPU メモリ不足で起動できない場合は、モデルを小さくするか、`--gpu-memory-utilization` や `--max-model-len`を調整してください。
 
 `CUDA driver version is insufficient for CUDA runtime version` と表示される場合は、インストールされた PyTorch/vLLM の CUDA runtime が NVIDIA driver より新しい状態です。
 まず driver と GPU が見えているか確認してください。
@@ -194,16 +155,16 @@ FlashAttention 関連のエラーが出る場合は、まず CUDA 12.8 backend �
 
 ```bash
 rm -rf .venv
-TORCH_BACKEND=cu128 ./setup_env.sh
+TORCH_BACKEND=cu128 ./setup_vllm_env.sh
 ```
 
-FlashInfer の JIT build で `nvcc: not found` と表示される場合は、CUDA toolkit の `nvcc` が `PATH` 上にあるか確認してください。`CUDA_HOME` の末尾に余分な `:` がある場合、`vserve.sh` は自動で補正します。
+FlashInfer の JIT build で `nvcc: not found` と表示される場合は、CUDA toolkit の `nvcc` が `PATH` 上にあるか確認してください。`CUDA_HOME` は正しい CUDA toolkit のパスに設定してください。
 
 それでも FlashAttention で失敗する場合は、FlashAttention 以外の attention backend を指定して起動します。
 
 ```bash
-ATTENTION_BACKEND=FLASHINFER ./vserve.sh Qwen/Qwen3.5-9B
-ATTENTION_BACKEND=TRITON_ATTN ./vserve.sh Qwen/Qwen3.5-9B
+./vllm.sh serve Qwen/Qwen3.5-9B --attention-backend FLASHINFER
+./vllm.sh serve Qwen/Qwen3.5-9B --attention-backend TRITON_ATTN
 ```
 
 より新しい driver を使える環境では、`TORCH_BACKEND=cu129` または `TORCH_BACKEND=auto` も利用できます。
