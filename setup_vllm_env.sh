@@ -1,11 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 cd "$ROOT_DIR"
 
+# direnv が有効でないシェルでも、リポジトリの設定を読み込む。
+if [ -f "$ROOT_DIR/.envrc" ]; then
+  source "$ROOT_DIR/.envrc"
+fi
+VENV_DIR="${UV_PROJECT_ENVIRONMENT:-${VIRTUAL_ENV:-$ROOT_DIR/.venv}}"
+VENV_DIR="$(realpath -m "$VENV_DIR")"
+export VIRTUAL_ENV="$VENV_DIR"
+export UV_PROJECT_ENVIRONMENT="$VENV_DIR"
+
 PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
-TORCH_BACKEND="${TORCH_BACKEND:-auto}"
+# CUDA compiler と PyTorch の runtime/header を 13.0 系に統一する。
+TORCH_BACKEND="${TORCH_BACKEND:-cu130}"
+if [ "$TORCH_BACKEND" != "cu130" ]; then
+  echo "This setup requires TORCH_BACKEND=cu130 (CUDA 13.0)." >&2
+  exit 1
+fi
 VLLM_SPEC="${VLLM_SPEC:-vllm}"
 # NVIDIA GPU にアクセスできない場合は、インストール前に停止する。
 if ! GPU_INFO="$(nvidia-smi \
@@ -20,20 +34,33 @@ echo "Detected NVIDIA GPU:"
 echo "$GPU_INFO"
 echo "Installing $VLLM_SPEC (Python $PYTHON_VERSION, torch backend: $TORCH_BACKEND)"
 
-uv venv --python "$PYTHON_VERSION" .venv
-uv pip install --python .venv/bin/python "$VLLM_SPEC" --torch-backend="$TORCH_BACKEND"
+# 再実行時も既存環境を保持し、CUDA パッケージを修復できるようにする。
+if [ ! -x "$VENV_DIR/bin/python" ]; then
+  uv venv --python "$PYTHON_VERSION" "$VENV_DIR"
+fi
+uv pip install --python "$VENV_DIR/bin/python" "$VLLM_SPEC" \
+  --torch-backend="$TORCH_BACKEND" \
+  'nvidia-cuda-nvcc==13.0.88' \
+  'nvidia-cuda-crt==13.0.88' \
+  'nvidia-nvvm==13.0.88' \
+  'nvidia-cuda-cccl==13.0.85' \
+  'nvidia-cuda-runtime>=13.0,<13.1' \
+  'nvidia-cuda-nvrtc>=13.0,<13.1' \
+  'nvidia-cuda-cupti>=13.0,<13.1'
 
-# uv がこのマシンで利用可能な CUDA build を選んだことを確認する。
-.venv/bin/python - <<'PY'
+# CUDA 13.0 build と GPU へのアクセスを確認する。
+"$VENV_DIR/bin/python" - <<'PY'
 import torch
 
 print(f"torch={torch.__version__}, CUDA={torch.version.cuda}")
+if torch.version.cuda != "13.0":
+    raise SystemExit("Expected PyTorch built for CUDA 13.0; check the installed torch/vLLM versions.")
 if not torch.cuda.is_available():
     raise SystemExit("PyTorch cannot access the NVIDIA GPU.")
 print(f"GPU count={torch.cuda.device_count()}")
 PY
 
-echo "Environment is ready."
+echo "Environment is ready: $VENV_DIR"
 
 # 環境構築が成功したら、任意のディレクトリから呼べるコマンドを登録する。
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
